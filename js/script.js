@@ -1,6 +1,6 @@
 // ===== Конфигурация =====
-const COLS = 20;
-const ROWS = 20;
+const COLS = 30;
+const ROWS = 30;
 const CELL = 20;
 const BASE_SPEED = 180; // мс между кадрами
 const SPEED_INCREMENT = 2; // ускорение за каждое яблоко

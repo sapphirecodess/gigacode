@@ -40,7 +40,7 @@ body {
 /* ===== Game Container ===== */
 .game-container {
     width: 100%;
-    max-width: 480px;
+    max-width: 640px;
     padding: 20px;
 }
 
