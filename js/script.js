@@ -2,7 +2,7 @@
 const COLS = 20;
 const ROWS = 20;
 const CELL = 20;
-const BASE_SPEED = 130; // мс между кадрами
+const BASE_SPEED = 180; // мс между кадрами
 const SPEED_INCREMENT = 2; // ускорение за каждое яблоко
 
 // ===== Состояние =====
