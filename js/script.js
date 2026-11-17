@@ -2,11 +2,14 @@
 const COLS = 30;
 const ROWS = 30;
 const CELL = 20;
-const BASE_SPEED = 180; // мс между кадрами
-const SPEED_INCREMENT = 2; // ускорение за каждое яблоко
+const BASE_INTERVAL = 180; // мс между шагами сетки
+const SPEED_INCREMENT = 2;
 
 // ===== Состояние =====
-let snake, direction, nextDirection, food, score, highScore, gameLoop, speed, isRunning, isPaused;
+let snake, direction, nextDirection, food, score, highScore, speed, isRunning, isPaused;
+let lastStepTime = 0;
+let animationId = null;
+let smoothness = 0; // 0..1 — прогресс между шагами
 
 // ===== DOM =====
 const canvas = document.getElementById('gameCanvas');
@@ -26,10 +29,8 @@ function init() {
 
     startBtn.addEventListener('click', startGame);
 
-    // Клавиатура
     document.addEventListener('keydown', handleKey);
 
-    // Мобильные кнопки
     document.querySelectorAll('.ctrl-btn').forEach(btn => {
         btn.addEventListener('touchstart', (e) => {
             e.preventDefault();
@@ -43,21 +44,28 @@ function init() {
     drawEmptyGrid();
 }
 
+// ===== Старт игры =====
 function startGame() {
     snake = [{ x: 10, y: 10 }];
     direction = { x: 1, y: 0 };
     nextDirection = { x: 1, y: 0 };
     score = 0;
-    speed = BASE_SPEED;
+    speed = BASE_INTERVAL;
     isRunning = true;
     isPaused = false;
+    lastStepTime = 0;
+    smoothness = 0;
 
     scoreEl.textContent = '0';
     overlay.classList.add('hidden');
 
     spawnFood();
-    if (gameLoop) clearInterval(gameLoop);
-    gameLoop = setInterval(update, speed);
+
+    if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+    }
+    requestAnimationFrame(gameLoop);
 }
 
 // ===== Спавн еды =====
@@ -72,10 +80,33 @@ function spawnFood() {
     food = pos;
 }
 
-// ===== Основной цикл =====
-function update() {
-    if (isPaused) return;
+// ===== Игровой цикл (60 FPS) =====
+function gameLoop(timestamp) {
+    if (!isRunning) return;
 
+    if (!lastStepTime) lastStepTime = timestamp;
+
+    if (!isPaused) {
+        const elapsed = timestamp - lastStepTime;
+
+        if (elapsed >= speed) {
+            update();
+            lastStepTime = timestamp;
+        }
+
+        // Интерполяция для плавности
+        smoothness = Math.min(1, elapsed / speed);
+    }
+
+    draw(smoothness);
+
+    if (isRunning) {
+        animationId = requestAnimationFrame(gameLoop);
+    }
+}
+
+// ===== Логика шага =====
+function update() {
     direction = { ...nextDirection };
 
     const head = {
@@ -83,19 +114,16 @@ function update() {
         y: snake[0].y + direction.y
     };
 
-    // Столкновение со стеной
     if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
         return gameOver();
     }
 
-    // Столкновение с собой
     if (snake.some(seg => seg.x === head.x && seg.y === head.y)) {
         return gameOver();
     }
 
     snake.unshift(head);
 
-    // Съели еду?
     if (head.x === food.x && head.y === food.y) {
         score += 10;
         scoreEl.textContent = score;
@@ -104,23 +132,18 @@ function update() {
     } else {
         snake.pop();
     }
-
-    draw();
 }
 
 // ===== Ускорение =====
 function increaseSpeed() {
-    if (speed > 50) {
-        speed = Math.max(50, speed - SPEED_INCREMENT);
-        clearInterval(gameLoop);
-        gameLoop = setInterval(update, speed);
+    if (speed > 60) {
+        speed = Math.max(60, speed - SPEED_INCREMENT);
     }
 }
 
 // ===== Game Over =====
 function gameOver() {
     isRunning = false;
-    clearInterval(gameLoop);
 
     if (score > highScore) {
         highScore = score;
@@ -136,20 +159,14 @@ function gameOver() {
     overlay.classList.remove('hidden');
 }
 
-// ===== Отрисовка =====
-function draw() {
-    // Фон
+// ===== Отрисовка с интерполяцией =====
+function draw(t) {
     ctx.fillStyle = '#0a0e17';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Сетка
     drawGrid();
-
-    // Еда
-    drawFood();
-
-    // Змейка
-    drawSnake();
+    drawFood(t);
+    drawSnake(t);
 }
 
 function drawGrid() {
@@ -169,8 +186,26 @@ function drawGrid() {
     }
 }
 
-function drawSnake() {
-    snake.forEach((seg, i) => {
+// ===== Плавная змейка =====
+function drawSnake(t) {
+    for (let i = 0; i < snake.length; i++) {
+        const seg = snake[i];
+        let drawX, drawY;
+
+        if (i === 0) {
+            // Голова — интерполирует к следующей позиции
+            drawX = seg.x + direction.x * t;
+            drawY = seg.y + direction.y * t;
+        } else {
+            // Тело — интерполирует от предыдущей позиции к текущей
+            const prev = snake[i - 1];
+            drawX = prev.x + (seg.x - prev.x) * t;
+            drawY = prev.y + (seg.y - prev.y) * t;
+        }
+
+        const px = drawX * CELL;
+        const py = drawY * CELL;
+
         const ratio = 1 - (i / snake.length) * 0.5;
         const r = Math.round(34 * ratio);
         const g = Math.round(197 * ratio);
@@ -179,36 +214,34 @@ function drawSnake() {
         ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
 
         const padding = 1;
-        const x = seg.x * CELL + padding;
-        const y = seg.y * CELL + padding;
         const size = CELL - padding * 2;
 
-        // Скруглённый квадрат
         const radius = i === 0 ? 6 : 4;
-        ctx.beginPath();
-        ctx.moveTo(x + radius, y);
-        ctx.lineTo(x + size - radius, y);
-        ctx.quadraticCurveTo(x + size, y, x + size, y + radius);
-        ctx.lineTo(x + size, y + size - radius);
-        ctx.quadraticCurveTo(x + size, y + size, x + size - radius, y + size);
-        ctx.lineTo(x + radius, y + size);
-        ctx.quadraticCurveTo(x, y + size, x, y + size - radius);
-        ctx.lineTo(x, y + radius);
-        ctx.quadraticCurveTo(x, y, x + radius, y);
-        ctx.closePath();
+        drawRoundedRect(ctx, px + padding, py + padding, size, size, radius);
         ctx.fill();
 
-        // Глаза на голове
         if (i === 0) {
-            drawEyes(seg);
+            drawEyes(px + CELL / 2, py + CELL / 2);
         }
-    });
+    }
 }
 
-function drawEyes(head) {
-    const cx = head.x * CELL + CELL / 2;
-    const cy = head.y * CELL + CELL / 2;
+function drawRoundedRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
 
+// ===== Глаза =====
+function drawEyes(cx, cy) {
     let eye1, eye2;
     const offset = 4;
     const eyeSize = 3;
@@ -244,23 +277,26 @@ function drawEyes(head) {
     ctx.fill();
 }
 
-function drawFood() {
-    const cx = food.x * CELL + CELL / 2;
-    const cy = food.y * CELL + CELL / 2;
+// ===== Плавная еда =====
+function drawFood(t) {
+    const cx = (food.x + (t - 1) * 0) * CELL + CELL / 2;
+    const cy = (food.y + (t - 1) * 0) * CELL + CELL / 2;
     const radius = CELL / 2 - 2;
 
-    // Свечение
+    // Пульсация
+    const pulse = 1 + Math.sin(Date.now() / 300) * 0.08;
+    const r = radius * pulse;
+
     ctx.shadowColor = 'rgba(239, 68, 68, 0.6)';
     ctx.shadowBlur = 12;
 
     ctx.fillStyle = '#ef4444';
     ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.shadowBlur = 0;
 
-    // Блик
     ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
     ctx.beginPath();
     ctx.arc(cx - 2, cy - 2, 3, 0, Math.PI * 2);
@@ -307,7 +343,6 @@ function setDirection(dir) {
     const target = map[dir];
     if (!target) return;
 
-    // Нельзя развернуться на 180°
     if (target.x === -direction.x && target.y === -direction.y) return;
 
     nextDirection = target;
