@@ -6,10 +6,10 @@ const BASE_INTERVAL = 180; // мс между шагами сетки
 const SPEED_INCREMENT = 2;
 
 // ===== Состояние =====
-let snake, direction, nextDirection, food, score, highScore, speed, isRunning, isPaused;
-let lastStepTime = 0;
+let snake, prevSnake, direction, nextDirection, food, score, highScore, speed, isRunning, isPaused;
+let accumulator = 0;
 let animationId = null;
-let smoothness = 0; // 0..1 — прогресс между шагами
+let lastFrameTime = 0;
 
 // ===== DOM =====
 const canvas = document.getElementById('gameCanvas');
@@ -28,7 +28,6 @@ function init() {
     highScoreEl.textContent = highScore;
 
     startBtn.addEventListener('click', startGame);
-
     document.addEventListener('keydown', handleKey);
 
     document.querySelectorAll('.ctrl-btn').forEach(btn => {
@@ -47,14 +46,15 @@ function init() {
 // ===== Старт игры =====
 function startGame() {
     snake = [{ x: 10, y: 10 }];
+    prevSnake = [{ x: 10, y: 10 }];
     direction = { x: 1, y: 0 };
     nextDirection = { x: 1, y: 0 };
     score = 0;
     speed = BASE_INTERVAL;
     isRunning = true;
     isPaused = false;
-    lastStepTime = 0;
-    smoothness = 0;
+    accumulator = 0;
+    lastFrameTime = 0;
 
     scoreEl.textContent = '0';
     overlay.classList.add('hidden');
@@ -65,7 +65,7 @@ function startGame() {
         cancelAnimationFrame(animationId);
         animationId = null;
     }
-    requestAnimationFrame(gameLoop);
+    animationId = requestAnimationFrame(gameLoop);
 }
 
 // ===== Спавн еды =====
@@ -80,29 +80,41 @@ function spawnFood() {
     food = pos;
 }
 
-// ===== Игровой цикл (60 FPS) =====
+// ===== Игровой цикл: fixed timestep + accumulator =====
 function gameLoop(timestamp) {
     if (!isRunning) return;
 
-    if (!lastStepTime) lastStepTime = timestamp;
+    if (lastFrameTime === 0) {
+        lastFrameTime = timestamp;
+        animationId = requestAnimationFrame(gameLoop);
+        return;
+    }
+
+    const delta = timestamp - lastFrameTime;
+    lastFrameTime = timestamp;
 
     if (!isPaused) {
-        const elapsed = timestamp - lastStepTime;
+        accumulator += delta;
 
-        if (elapsed >= speed) {
+        // Шаг логики с фиксированным шагом
+        while (accumulator >= speed) {
+            savePrevSnake();
             update();
-            lastStepTime = timestamp;
+            accumulator -= speed;
         }
-
-        // Интерполяция для плавности
-        smoothness = Math.min(1, elapsed / speed);
     }
 
-    draw(smoothness);
+    // t — прогресс между шагами: 0 = до шага, 1 = после шага
+    const t = speed > 0 ? accumulator / speed : 0;
 
-    if (isRunning) {
-        animationId = requestAnimationFrame(gameLoop);
-    }
+    draw(t);
+
+    animationId = requestAnimationFrame(gameLoop);
+}
+
+// ===== Сохраняем состояние до шага =====
+function savePrevSnake() {
+    prevSnake = snake.map(s => ({ x: s.x, y: s.y }));
 }
 
 // ===== Логика шага =====
@@ -165,7 +177,7 @@ function draw(t) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     drawGrid();
-    drawFood(t);
+    drawFood();
     drawSnake(t);
 }
 
@@ -186,22 +198,14 @@ function drawGrid() {
     }
 }
 
-// ===== Плавная змейка =====
+// ===== Плавная змейка с интерполяцией =====
 function drawSnake(t) {
     for (let i = 0; i < snake.length; i++) {
-        const seg = snake[i];
-        let drawX, drawY;
+        const curr = snake[i];
+        const prev = (i < prevSnake.length) ? prevSnake[i] : curr;
 
-        if (i === 0) {
-            // Голова — интерполирует к следующей позиции
-            drawX = seg.x + direction.x * t;
-            drawY = seg.y + direction.y * t;
-        } else {
-            // Тело — интерполирует от предыдущей позиции к текущей
-            const prev = snake[i - 1];
-            drawX = prev.x + (seg.x - prev.x) * t;
-            drawY = prev.y + (seg.y - prev.y) * t;
-        }
+        const drawX = prev.x + (curr.x - prev.x) * t;
+        const drawY = prev.y + (curr.y - prev.y) * t;
 
         const px = drawX * CELL;
         const py = drawY * CELL;
@@ -277,13 +281,12 @@ function drawEyes(cx, cy) {
     ctx.fill();
 }
 
-// ===== Плавная еда =====
-function drawFood(t) {
-    const cx = (food.x + (t - 1) * 0) * CELL + CELL / 2;
-    const cy = (food.y + (t - 1) * 0) * CELL + CELL / 2;
+// ===== Еда с пульсацией =====
+function drawFood() {
+    const cx = food.x * CELL + CELL / 2;
+    const cy = food.y * CELL + CELL / 2;
     const radius = CELL / 2 - 2;
 
-    // Пульсация
     const pulse = 1 + Math.sin(Date.now() / 300) * 0.08;
     const r = radius * pulse;
 
